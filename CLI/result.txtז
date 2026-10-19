@@ -1,0 +1,317 @@
+
+
+
+using System.CommandLine;
+
+// יצירת הפקודה הראשית
+RootCommand rootCommand = new RootCommand("My Code Bundler CLI");
+
+// יצירת הפקודה לאריזת קבצים
+Command bundleCommand = new Command("bundle", "Combine code files into one file");
+
+Option<string> languageOption = new Option<string>("--language", "-l")
+{
+    Description = "Programming languages to include (or all)",
+    Required = true
+};
+
+
+languageOption.Validators.Add(result =>
+{
+    string? value = result.GetValueOrDefault<string>();
+
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        result.AddError("You must specify at least one language.");
+        return;
+    }
+
+    string[] selectedLanguages = value.Split(',');
+
+    Dictionary<string, string[]> languages = GetLanguages();
+
+    foreach (string language in selectedLanguages)
+    {
+        string currentLanguage = language.Trim();
+
+        if (currentLanguage.Length == 0)
+        {
+            result.AddError("Language names cannot be empty.");
+            return;
+        }
+
+        if (currentLanguage.Equals("all", StringComparison.OrdinalIgnoreCase))
+        {
+            if (selectedLanguages.Length > 1)
+            {
+                result.AddError("'all' must be used alone.");
+            }
+
+            return;
+        }
+
+        if (!languages.ContainsKey(currentLanguage))
+        {
+            result.AddError($"Unsupported language: {currentLanguage}");
+            return;
+        }
+    }
+});
+
+
+Option<string> outputOption = new Option<string>("--output", "-o")
+{
+    Description = "The output file name or full path"
+};
+
+Option<bool> noteOption = new Option<bool>("--note", "-n")
+{
+    Description = "Include source file paths as comments"
+};
+
+
+Option<string> sortOption = new Option<string>("--sort", "-s")
+{
+    Description = "Sort files by name or type",
+    DefaultValueFactory = _ => "name"
+};
+
+
+sortOption.Validators.Add(result =>
+{
+    string? value = result.GetValueOrDefault<string>();
+
+    if (value != "name" && value != "type")
+    {
+        result.AddError("Sort must be 'name' or 'type'.");
+    }
+});
+
+
+Option<bool> removeEmptyLinesOption =
+    new Option<bool>("--remove-empty-lines", "-r")
+    {
+        Description = "Remove empty lines from source files"
+    };
+
+
+Option<string> authorOption = new Option<string>("--author", "-a")
+{
+    Description = "The name of the bundle file author"
+};
+
+bundleCommand.Options.Add(authorOption);
+
+
+bundleCommand.Options.Add(removeEmptyLinesOption);
+
+
+bundleCommand.Options.Add(sortOption);
+
+
+bundleCommand.Options.Add(noteOption);
+
+bundleCommand.Options.Add(outputOption);
+
+bundleCommand.Options.Add(languageOption);
+
+
+
+bundleCommand.SetAction(parseResult =>
+{
+    string language = parseResult.GetValue(languageOption)!;
+    string? output = parseResult.GetValue(outputOption);
+    bool note = parseResult.GetValue(noteOption);
+    string sort = parseResult.GetValue(sortOption)!;
+    bool removeEmptyLines = parseResult.GetValue(removeEmptyLinesOption);
+    string? author = parseResult.GetValue(authorOption);
+
+    Console.WriteLine($"Language: {language}");
+    Console.WriteLine($"Output: {output}");
+    Console.WriteLine($"Note: {note}");
+    Console.WriteLine($"Sort: {sort}");
+    Console.WriteLine($"Remove empty lines: {removeEmptyLines}");
+    Console.WriteLine($"Author: {author}");
+
+
+    string currentDirectory = Directory.GetCurrentDirectory();
+
+    List<string> files = GetProjectFiles(currentDirectory);
+
+    files = FilterFilesByLanguage(files, language);
+
+    if (string.IsNullOrWhiteSpace(output))
+    {
+        output = "bundle.txt";
+    }
+
+    string outputPath = Path.GetFullPath(output);
+
+    // Remove output file from source files
+    files.RemoveAll(file =>
+        Path.GetFullPath(file).Equals(
+            outputPath,
+            StringComparison.OrdinalIgnoreCase
+        )
+    );
+
+    // Create the bundle file
+    CreateBundle(files, outputPath);
+
+
+    Console.WriteLine();
+    Console.WriteLine($"Current directory: {currentDirectory}");
+    Console.WriteLine($"Files found: {files.Count}");
+
+    foreach (string file in files)
+    {
+        Console.WriteLine(Path.GetRelativePath(currentDirectory, file));
+    }
+
+    if (string.IsNullOrWhiteSpace(output))
+    {
+        output = "bundle.txt";
+    }
+
+
+    // Prevent the output file from being included in the bundle
+    files.RemoveAll(file =>
+        Path.GetFullPath(file).Equals(
+            outputPath,
+            StringComparison.OrdinalIgnoreCase
+        )
+    );
+
+    // Create the bundle
+    CreateBundle(files, outputPath);
+
+
+    
+
+
+
+});
+
+// יצירת הפקודה ליצירת קובץ תגובה
+Command createRspCommand = new Command("create-rsp", "Create a response file for bundle");
+
+// הוספת שתי הפקודות לפקודה הראשית
+rootCommand.Subcommands.Add(bundleCommand);
+rootCommand.Subcommands.Add(createRspCommand);
+
+// הפעלת מנגנון פענוח הפקודות
+return rootCommand.Parse(args).Invoke();
+
+
+static List<string> GetProjectFiles(string directoryPath)
+{
+    List<string> files = new List<string>();
+
+    string[] excludedFolders =
+    {
+        "bin",
+        "obj",
+        "Debug",
+        "Release",
+        ".git",
+        "node_modules"
+    };
+
+    foreach (string file in Directory.GetFiles(directoryPath))
+    {
+        files.Add(file);
+    }
+
+    foreach (string directory in Directory.GetDirectories(directoryPath))
+    {
+        string folderName = Path.GetFileName(directory);
+
+        if (excludedFolders.Contains(folderName, StringComparer.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        files.AddRange(GetProjectFiles(directory));
+    }
+
+    return files;
+}
+
+
+static Dictionary<string, string[]> GetLanguages()
+{
+    return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+    {
+        { "csharp", new[] { ".cs" } },
+        { "java", new[] { ".java" } },
+        { "python", new[] { ".py" } },
+        { "javascript", new[] { ".js", ".jsx" } },
+        { "typescript", new[] { ".ts", ".tsx" } },
+        { "html", new[] { ".html", ".htm" } },
+        { "css", new[] { ".css" } },
+        { "cpp", new[] { ".cpp", ".h", ".hpp" } },
+        { "c", new[] { ".c" } },
+        { "sql", new[] { ".sql" } }
+    };
+}
+
+
+static List<string> FilterFilesByLanguage(
+    List<string> files,
+    string language)
+{
+    Dictionary<string, string[]> languages = GetLanguages();
+
+    string[] selectedLanguages = language.Split(
+        ',',
+        StringSplitOptions.TrimEntries |
+        StringSplitOptions.RemoveEmptyEntries
+    );
+
+    List<string> extensions = new List<string>();
+
+    if (selectedLanguages.Contains("all", StringComparer.OrdinalIgnoreCase))
+    {
+        extensions = languages.Values
+            .SelectMany(value => value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+    else
+    {
+        foreach (string selectedLanguage in selectedLanguages)
+        {
+            if (languages.TryGetValue(selectedLanguage, out string[]? languageExtensions))
+            {
+                extensions.AddRange(languageExtensions);
+            }
+        }
+    }
+
+    return files
+        .Where(file => extensions.Contains(
+            Path.GetExtension(file),
+            StringComparer.OrdinalIgnoreCase))
+        .ToList();
+}
+
+
+
+static void CreateBundle(List<string> files, string outputPath)
+{
+    using StreamWriter writer = new StreamWriter(outputPath);
+
+    foreach (string file in files)
+    {
+        string content = File.ReadAllText(file);
+
+        writer.WriteLine(content);
+        writer.WriteLine();
+    }
+
+    Console.WriteLine($"Bundle created successfully: {outputPath}");
+}
+
+
+
+
